@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Record</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+  }
+  #screen {
+    position: fixed; inset: 0;
+    background: #000;
+  }
+  video { display: none; }
+</style>
+</head>
+<body>
+<div id="screen"></div>
+<video id="preview" playsinline muted></video>
+
+<script>
+const screenEl = document.getElementById('screen');
+const previewEl = document.getElementById('preview');
+
+let stream = null;
+let recorder = null;
+let chunks = [];
+let recording = false;
+let busy = false;
+
+function pickMimeType() {
+  const candidates = [
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm'
+  ];
+  for (const t of candidates) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return '';
+}
+
+async function startRecording() {
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'user' },
+    audio: true
+  });
+
+  previewEl.srcObject = stream;
+  previewEl.play().catch(() => {});
+
+  const mimeType = pickMimeType();
+  chunks = [];
+
+  try {
+    recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  } catch (e) {
+    recorder = new MediaRecorder(stream);
+  }
+
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  };
+
+  recorder.onstop = onRecordingStopped;
+  recorder.start();
+  recording = true;
+}
+
+function stopRecording() {
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+}
+
+async function onRecordingStopped() {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+
+  const type = recorder.mimeType || 'video/mp4';
+  const blob = new Blob(chunks, { type });
+  const ext = type.includes('mp4') ? 'mp4' : 'webm';
+  const filename = `recording-${Date.now()}.${ext}`;
+  const file = new File([blob], filename, { type });
+
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+      recording = false;
+      return;
+    } catch (e) { /* fall through to download */ }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+  recording = false;
+}
+
+screenEl.addEventListener('click', async () => {
+  if (busy) return;
+  busy = true;
+  try {
+    if (!recording) {
+      await startRecording();
+    } else {
+      recording = false;
+      stopRecording();
+    }
+  } finally {
+    busy = false;
+  }
+});
+</script>
+</body>
+</html>
